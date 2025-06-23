@@ -8,11 +8,7 @@ import os
 import re
 import string
 import uuid
-import networkx as nx
-import matplotlib.pyplot as plt
-
-# Set matplotlib backend for Streamlit
-plt.switch_backend('Agg')
+import plotly.graph_objects as go
 
 # File to store corrections
 CORRECTIONS_FILE = "corrections.json"
@@ -45,7 +41,7 @@ def normalize_product_name(text):
     tokens = text.split()
     tokens = [token for token in tokens if token not in product_stop_words]
     
-    # Join tokens back into string
+    # Return joined string
     return ' '.join(tokens)
 
 # Function to load corrections
@@ -59,46 +55,102 @@ def load_corrections():
 def save_corrections(corrections):
     with open(CORRECTIONS_FILE, 'w') as f:
         json.dump(corrections, f, indent=4)
-    
 
-# Function to visualize product connections
-def visualize_product_connections(df, name_column, groups):
-    # Create graph
-    G = nx.Graph()
+# Function to visualize product groups with Plotly
+def visualize_product_groups(df, name_column, groups):
+    # Initialize lists for nodes and edges
+    edge_x = []
+    edge_y = []
+    node_x = []
+    node_y = []
+    node_text = []
+    node_labels = []
+    node_colors = []
     
-    # Add nodes and edges for each group
-    color_map = {}
-    colors = plt.cm.get_cmap('tab10', len(groups))  # Get distinct colors
+    # Generate positions using a simple grid-like layout for clarity
+    np.random.seed(42)  # For reproducibility
+    n_groups = len(groups)
+    group_centers = [(np.cos(2 * np.pi * i / n_groups), np.sin(2 * np.pi * i / n_groups)) for i in range(n_groups)]
+    
+    # Color palette
+    colors = [
+        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+        '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
+    ]
+    
+    # Process each group
     for idx, (group_id, indices) in enumerate(groups.items()):
-        group_color = colors(idx)
-        for i in indices:
-            product = df.iloc[i][name_column][:20]  # Shorten name for readability
-            G.add_node(product)
-            color_map[product] = group_color
-            # Connect all products in the same group
-            for j in indices:
-                if i != j:
-                    other_product = df.iloc[j][name_column][:20]
-                    G.add_edge(product, other_product)
+        # Get center for the group
+        center_x, center_y = group_centers[idx % len(group_centers)]
+        n_products = len(indices)
+        
+        # Arrange products in a circle around the center
+        for i, product_idx in enumerate(indices):
+            product = df.iloc[product_idx][name_column]
+            short_label = ' '.join(product.split()[:3])  # First 3 words for label
+            angle = 2 * np.pi * i / max(n_products, 1)
+            radius = 0.3
+            x = center_x + radius * np.cos(angle)
+            y = center_y + radius * np.sin(angle)
+            
+            node_x.append(x)
+            node_y.append(y)
+            node_text.append(product)  # Full name for hover
+            node_labels.append(short_label)
+            node_colors.append(colors[idx % len(colors)])
+            
+            # Add edges between all products in the group
+            for j in range(i + 1, len(indices)):
+                other_idx = indices[j]
+                other_x = center_x + radius * np.cos(2 * np.pi * j / max(n_products, 1))
+                other_y = center_y + radius * np.sin(2 * np.pi * j / max(n_products, 1))
+                edge_x.extend([x, other_x, None])
+                edge_y.extend([y, other_y, None])
     
-    # Draw graph
-    plt.figure(figsize=(12, 8))
-    pos = nx.spring_layout(G, k=0.5, seed=42)  # Layout for spacing nodes
-    nx.draw(
-        G,
-        pos,
-        with_labels=True,
-        node_color=[color_map[node] for node in G.nodes()],
-        node_size=500,
-        font_size=10,
-        font_weight='bold',
-        edge_color='gray'
+    # Create edge trace
+    edge_trace = go.Scatter(
+        x=edge_x,
+        y=edge_y,
+        line=dict(width=1, color='#888'),
+        hoverinfo='none',
+        mode='lines'
     )
     
-    plt.title("Product Connection Map", fontsize=14, pad=20)
+    # Create node trace
+    node_trace = go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode='markers+text',
+        hoverinfo='text',
+        text=node_labels,
+        textposition='top center',
+        textfont=dict(size=10, color='black'),
+        marker=dict(
+            showscale=False,
+            color=node_colors,
+            size=20,
+            line_width=1
+        ),
+        hovertext=node_text
+    )
+    
+    # Create figure
+    fig = go.Figure(
+        data=[edge_trace, node_trace],
+        layout=go.Layout(
+            title='Product Grouping Map',
+            titlefont_size=16,
+            showlegend=False,
+            hovermode='closest',
+            margin=dict(b=20, l=5, r=5, t=40),
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            plot_bgcolor='white'
+        )
+    )
     
     # Display in Streamlit
-    st.pyplot(plt)
+    st.plotly_chart(fig, use_container_width=True)
 
 # Function to deduplicate products
 def deduplicate_products(df, name_column, threshold):
@@ -211,8 +263,8 @@ if uploaded_file:
                         st.rerun()
             
             # Display visualization
-            st.subheader("Product Connection Map")
-            visualize_product_connections(df, name_column, groups)
+            st.subheader("Product Grouping Map")
+            visualize_product_groups(df, name_column, groups)
         
         # Allow merging groups
         if 'groups' in st.session_state:
@@ -244,8 +296,8 @@ if uploaded_file:
                         st.rerun()
             
             # Display visualization after merge
-            st.subheader("Product Connection Map")
-            visualize_product_connections(st.session_state.df, st.session_state.name_column, st.session_state.groups)
+            st.subheader("Product Grouping Map")
+            visualize_product_groups(st.session_state.df, st.session_state.name_column, st.session_state.groups)
             
             # Download corrected groups
             if st.session_state.groups:
