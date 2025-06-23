@@ -67,7 +67,7 @@ def visualize_product_groups(df, name_column, groups):
     node_labels = []
     node_colors = []
     
-    # Generate positions using a simple grid-like layout for clarity
+    # Generate positions using a grid-like layout for clarity
     np.random.seed(42)  # For reproducibility
     n_groups = len(groups)
     group_centers = [(np.cos(2 * np.pi * i / n_groups), np.sin(2 * np.pi * i / n_groups)) for i in range(n_groups)]
@@ -149,8 +149,7 @@ def visualize_product_groups(df, name_column, groups):
         )
     )
     
-    # Display in Streamlit
-    st.plotly_chart(fig, use_container_width=True)
+    return fig
 
 # Function to deduplicate products
 def deduplicate_products(df, name_column, threshold):
@@ -200,10 +199,15 @@ st.title("Product Deduplication App")
 uploaded_file = st.file_uploader("Upload Excel file with product data", type=["xlsx", "xls"])
 
 if uploaded_file:
+    # Read Excel file
     try:
-        # Read Excel file with explicit engine
         df = pd.read_excel(uploaded_file, engine="openpyxl")
-        
+    except Exception as e:
+        st.error(f"Error reading Excel file: {str(e)}. Please ensure the file is a valid .xlsx file.")
+        st.stop()
+    
+    # Process data
+    try:
         # Display column selection
         columns = df.columns.tolist()
         name_column = st.selectbox("Select the column with product names", columns)
@@ -264,7 +268,8 @@ if uploaded_file:
             
             # Display visualization
             st.subheader("Product Grouping Map")
-            visualize_product_groups(df, name_column, groups)
+            fig = visualize_product_groups(df, name_column, groups)
+            st.plotly_chart(fig, use_container_width=True, key="dedup_viz")
         
         # Allow merging groups
         if 'groups' in st.session_state:
@@ -297,7 +302,8 @@ if uploaded_file:
             
             # Display visualization after merge
             st.subheader("Product Grouping Map")
-            visualize_product_groups(st.session_state.df, st.session_state.name_column, st.session_state.groups)
+            fig = visualize_product_groups(st.session_state.df, st.session_state.name_column, st.session_state.groups)
+            st.plotly_chart(fig, use_container_width=True, key="merge_viz")
             
             # Download corrected groups
             if st.session_state.groups:
@@ -318,7 +324,7 @@ if uploaded_file:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
     except Exception as e:
-        st.error(f"Error reading Excel file: {str(e)}. Please ensure the file is a valid .xlsx file and try again.")
+        st.error(f"Error processing data or rendering visualization: {str(e)}. Please try again or check the input data.")
 
 # Display current corrections (for debugging)
 if st.checkbox("Show current corrections"):
