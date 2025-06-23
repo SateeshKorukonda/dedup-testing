@@ -8,6 +8,12 @@ import os
 import re
 import string
 import uuid
+import seaborn as sns
+import matplotlib.pyplot as plt
+import umap
+
+# Set matplotlib backend for Streamlit
+plt.switch_backend('Agg')
 
 # File to store corrections
 CORRECTIONS_FILE = "corrections.json"
@@ -20,14 +26,28 @@ if 'similarity_threshold' not in st.session_state:
 if 'group_id_counter' not in st.session_state:
     st.session_state.group_id_counter = 0
 
-# Function to preprocess text
-def preprocess_text(text):
+# Function to normalize product names
+def normalize_product_name(text):
     if not isinstance(text, str):
         return ""
+    
+    # Product-specific stop words
+    product_stop_words = {
+        'model', 'color', 'size', 'dual', 'sim', 'wifi', 'enabled', 'mens', 'womens', 
+        'men', 'women', 'type', 'variant', 'version', 'inch', 'gb', 'tb', 'esim'
+    }
+    
+    # Lowercase, remove punctuation, collapse spaces
     text = text.lower()
     text = re.sub(f'[{string.punctuation}]', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Split into tokens and remove stop words
+    tokens = text.split()
+    tokens = [token for token in tokens if token not in product_stop_words]
+    
+    # Join tokens back into string
+    return ' '.join(tokens)
 
 # Function to load corrections from file
 def load_corrections():
@@ -41,10 +61,59 @@ def save_corrections(corrections):
     with open(CORRECTIONS_FILE, 'w') as f:
         json.dump(corrections, f, indent=4)
 
+# Function to visualize groups
+def visualize_groups(df, name_column, groups):
+    # Normalize product names
+    product_names = df[name_column].apply(normalize_product_name).tolist()
+    
+    # Compute TF-IDF vectors
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform(product_names)
+    
+    # Reduce dimensions to 2D using UMAP
+    reducer = umap.UMAP(n_components=2, random_state=42)
+    embedding = reducer.fit_transform(tfidf_matrix)
+    
+    # Create DataFrame for plotting
+    plot_data = pd.DataFrame({
+        'x': embedding[:, 0],
+        'y': embedding[:, 1],
+        'Product': df[name_column],
+        'Group': ''
+    })
+    
+    # Assign group IDs
+    for group_id, indices in groups.items():
+        plot_data.loc[indices, 'Group'] = group_id
+    
+    # Create scatter plot
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(
+        data=plot_data,
+        x='x',
+        y='y',
+        hue='Group',
+        palette='deep',
+        s=100,
+        legend=False
+    )
+    
+    # Add labels for a few products (avoid clutter)
+    for i, row in plot_data.iterrows():
+        if i % 3 == 0:  # Label every 3rd product to avoid overcrowding
+            plt.text(row['x'] + 0.1, row['y'], row['Product'][:20], fontsize=8)
+    
+    plt.title("Product Groups Visualization")
+    plt.xlabel("UMAP Dimension 1")
+    plt.ylabel("UMAP Dimension 2")
+    
+    # Display plot in Streamlit
+    st.pyplot(plt)
+
 # Function to deduplicate products
 def deduplicate_products(df, name_column, threshold):
-    # Preprocess product names
-    product_names = df[name_column].apply(preprocess_text).tolist()
+    # Normalize product names
+    product_names = df[name_column].apply(normalize_product_name).tolist()
     
     # Compute TF-IDF vectors
     vectorizer = TfidfVectorizer()
@@ -140,8 +209,8 @@ if uploaded_file:
                         for other_idx in indices:
                             if other_idx != indices[i]:
                                 product_pair = tuple(sorted([
-                                    preprocess_text(df.iloc[indices[i]][name_column]),
-                                    preprocess_text(df.iloc[other_idx][name_column])
+                                    normalize_product_name(df.iloc[indices[i]][name_column]),
+                                    normalize_product_name(df.iloc[other_idx][name_column])
                                 ]))
                                 correction_key = f"{product_pair[0]}|{product_pair[1]}"
                                 st.session_state.corrections[correction_key] = False
@@ -150,6 +219,10 @@ if uploaded_file:
                         # Update session state
                         st.session_state.groups = groups
                         st.rerun()
+            
+            # Display visualization
+            st.subheader("Visualization of Product Groups")
+            visualize_groups(df, name_column, groups)
         
         # Allow merging groups
         if 'groups' in st.session_state:
@@ -169,14 +242,20 @@ if uploaded_file:
                             for idx2 in st.session_state.groups[group1]:
                                 if idx1 < idx2:
                                     product_pair = tuple(sorted([
-                                        preprocess_text(df.iloc[idx1][name_column]),
-                                        preprocess_text(df.iloc[idx2][name_column])
+                                        normalize_product_name(df.iloc[idx1][name_column]),
+                                        normalize_product_name(df.iloc[idx2][name_column])
                                     ]))
                                     correction_key = f"{product_pair[0]}|{product_pair[1]}"
                                     st.session_state.corrections[correction_key] = True
                                     save_corrections(st.session_state.corrections)
                         
+                        # Update session state
+                        st.session_state.groups = st.session_state.groups
                         st.rerun()
+            
+            # Display visualization after merge
+            st.subheader("Visualization of Product Groups")
+            visualize_groups(st.session_state.df, st.session_state.name_column, st.session_state.groups)
             
             # Download corrected groups
             if st.session_state.groups:
