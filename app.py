@@ -8,9 +8,8 @@ import os
 import re
 import string
 import uuid
-import seaborn as sns
+import networkx as nx
 import matplotlib.pyplot as plt
-import umap
 
 # Set matplotlib backend for Streamlit
 plt.switch_backend('Agg')
@@ -37,7 +36,7 @@ def normalize_product_name(text):
         'men', 'women', 'type', 'variant', 'version', 'inch', 'gb', 'tb', 'esim'
     }
     
-    # Lowercase, remove punctuation, collapse spaces
+    # Normalize text
     text = text.lower()
     text = re.sub(f'[{string.punctuation}]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -49,65 +48,56 @@ def normalize_product_name(text):
     # Join tokens back into string
     return ' '.join(tokens)
 
-# Function to load corrections from file
+# Function to load corrections
 def load_corrections():
     if os.path.exists(CORRECTIONS_FILE):
         with open(CORRECTIONS_FILE, 'r') as f:
             return json.load(f)
     return {}
 
-# Function to save corrections to file
+# Function to save corrections
 def save_corrections(corrections):
     with open(CORRECTIONS_FILE, 'w') as f:
         json.dump(corrections, f, indent=4)
+    
 
-# Function to visualize groups
-def visualize_groups(df, name_column, groups):
-    # Normalize product names
-    product_names = df[name_column].apply(normalize_product_name).tolist()
+# Function to visualize product connections
+def visualize_product_connections(df, name_column, groups):
+    # Create graph
+    G = nx.Graph()
     
-    # Compute TF-IDF vectors
-    vectorizer = TfidfVectorizer()
-    tfidf_matrix = vectorizer.fit_transform(product_names)
+    # Add nodes and edges for each group
+    color_map = {}
+    colors = plt.cm.get_cmap('tab10', len(groups))  # Get distinct colors
+    for idx, (group_id, indices) in enumerate(groups.items()):
+        group_color = colors(idx)
+        for i in indices:
+            product = df.iloc[i][name_column][:20]  # Shorten name for readability
+            G.add_node(product)
+            color_map[product] = group_color
+            # Connect all products in the same group
+            for j in indices:
+                if i != j:
+                    other_product = df.iloc[j][name_column][:20]
+                    G.add_edge(product, other_product)
     
-    # Reduce dimensions to 2D using UMAP
-    reducer = umap.UMAP(n_components=2, random_state=42)
-    embedding = reducer.fit_transform(tfidf_matrix)
-    
-    # Create DataFrame for plotting
-    plot_data = pd.DataFrame({
-        'x': embedding[:, 0],
-        'y': embedding[:, 1],
-        'Product': df[name_column],
-        'Group': ''
-    })
-    
-    # Assign group IDs
-    for group_id, indices in groups.items():
-        plot_data.loc[indices, 'Group'] = group_id
-    
-    # Create scatter plot
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(
-        data=plot_data,
-        x='x',
-        y='y',
-        hue='Group',
-        palette='deep',
-        s=100,
-        legend=False
+    # Draw graph
+    plt.figure(figsize=(12, 8))
+    pos = nx.spring_layout(G, k=0.5, seed=42)  # Layout for spacing nodes
+    nx.draw(
+        G,
+        pos,
+        with_labels=True,
+        node_color=[color_map[node] for node in G.nodes()],
+        node_size=500,
+        font_size=10,
+        font_weight='bold',
+        edge_color='gray'
     )
     
-    # Add labels for a few products (avoid clutter)
-    for i, row in plot_data.iterrows():
-        if i % 3 == 0:  # Label every 3rd product to avoid overcrowding
-            plt.text(row['x'] + 0.1, row['y'], row['Product'][:20], fontsize=8)
+    plt.title("Product Connection Map", fontsize=14, pad=20)
     
-    plt.title("Product Groups Visualization")
-    plt.xlabel("UMAP Dimension 1")
-    plt.ylabel("UMAP Dimension 2")
-    
-    # Display plot in Streamlit
+    # Display in Streamlit
     st.pyplot(plt)
 
 # Function to deduplicate products
@@ -221,8 +211,8 @@ if uploaded_file:
                         st.rerun()
             
             # Display visualization
-            st.subheader("Visualization of Product Groups")
-            visualize_groups(df, name_column, groups)
+            st.subheader("Product Connection Map")
+            visualize_product_connections(df, name_column, groups)
         
         # Allow merging groups
         if 'groups' in st.session_state:
@@ -254,8 +244,8 @@ if uploaded_file:
                         st.rerun()
             
             # Display visualization after merge
-            st.subheader("Visualization of Product Groups")
-            visualize_groups(st.session_state.df, st.session_state.name_column, st.session_state.groups)
+            st.subheader("Product Connection Map")
+            visualize_product_connections(st.session_state.df, st.session_state.name_column, st.session_state.groups)
             
             # Download corrected groups
             if st.session_state.groups:
